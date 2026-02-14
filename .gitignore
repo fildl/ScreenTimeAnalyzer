@@ -41,7 +41,6 @@ venv/
 # Project Data (Sensitive)
 data/
 !data/.keep
-ref/
 
 # IDEs
 .idea/

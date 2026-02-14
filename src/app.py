@@ -62,8 +62,6 @@ except Exception as e:
     st.stop()
 
 # --- Sidebar ---
-st.sidebar.title("Screen Time Analyzer")
-st.sidebar.markdown("---")
 
 # Year Filter
 years = sorted(df['year'].unique().tolist(), reverse=True)
@@ -106,9 +104,16 @@ st.markdown("---")
 
 # --- Visualizations ---
 
-st.subheader("Weekly Activity")
+st.subheader("Weekly Screen Time Activity")
 fig_weekly = viz.plot_weekly_activity(year=selected_year, device=selected_device)
 if fig_weekly:
     st.plotly_chart(fig_weekly, use_container_width=True)
+else:
+    st.info("No data available for this selection.")
+
+st.subheader("Daily Activity Calendar")
+fig_calendar = viz.plot_daily_calendar(year=selected_year, device=selected_device)
+if fig_calendar:
+    st.plotly_chart(fig_calendar, use_container_width=True)
 else:
     st.info("No data available for this selection.")
