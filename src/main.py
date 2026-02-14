@@ -10,43 +10,76 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 
 def ingest_files():
-    # Detect device folders in data/ (excluding special folders like 'db', 'processed')
-    reserved = {'db', 'processed', 'input'} 
+    # Detect device folders and files in data/ 
+    reserved = {'db', 'processed', 'input'}
     
-    device_folders = [
-        d for d in os.listdir(DATA_DIR) 
-        if os.path.isdir(os.path.join(DATA_DIR, d)) and d not in reserved and not d.startswith('.')
-    ]
+    # Map device_name -> list of file paths
+    device_files_map = {}
     
+    # Folders to cleanup (delete if empty)
+    folders_to_cleanup = []
+
+    print(f"Scanning {DATA_DIR} for new data...")
+
+    # Safe check if DATA_DIR exists
+    if not os.path.exists(DATA_DIR):
+        print(f"Data directory {DATA_DIR} does not exist.")
+        return
+
+    for item in os.listdir(DATA_DIR):
+        item_path = os.path.join(DATA_DIR, item)
+        
+        # Skip reserved or hidden
+        if item in reserved or item.startswith('.'):
+            continue
+            
+        if os.path.isdir(item_path):
+            # It's a device folder (e.g. "Activity iPhone 13 mini")
+            device_name = item.replace("Activity ", "").strip()
+            files = glob.glob(os.path.join(item_path, "*.txt")) + glob.glob(os.path.join(item_path, "*.md"))
+            
+            if files:
+                if device_name not in device_files_map:
+                    device_files_map[device_name] = []
+                device_files_map[device_name].extend(files)
+            
+            folders_to_cleanup.append(item_path)
+            
+        elif os.path.isfile(item_path):
+            # It's a file directly in data/ (e.g. "Activity iPhone 13 mini.txt")
+            if item.lower().endswith('.txt') or item.lower().endswith('.md'):
+                filename_no_ext = os.path.splitext(item)[0]
+                # Infer device name from filename
+                if filename_no_ext.startswith("Activity "):
+                    device_name = filename_no_ext.replace("Activity ", "").strip()
+                else:
+                    device_name = filename_no_ext.strip()
+                
+                if device_name not in device_files_map:
+                    device_files_map[device_name] = []
+                device_files_map[device_name].append(item_path)
+
     conn = get_connection()
     cursor = conn.cursor()
     
-    files_processed_count = 0
-    
-    for device_folder in device_folders:
-        device_path = os.path.join(DATA_DIR, device_folder)
-        
-        # Clean device name (remove "Activity " prefix)
-        device_name_clean = device_folder.replace("Activity ", "").strip()
+    for device_name, file_paths in device_files_map.items():
+        print(f"Processing data for device: {device_name}")
         
         # Get or create device ID
-        device_id = get_or_create_device(device_name_clean)
-        
-        # Find all .txt or .md files
-        txt_files = glob.glob(os.path.join(device_path, "*.txt")) + glob.glob(os.path.join(device_path, "*.md"))
+        device_id = get_or_create_device(device_name)
         
         device_updated = False
 
-        for filepath in txt_files:
-            print(f"Processing {filepath}...")
+        for filepath in file_paths:
+            print(f"  Processing file: {filepath}")
             
             try:
                 snapshots = parse_file(filepath)
                 if not snapshots:
-                    print(f"Skipping {filepath}: No valid snapshots found.")
+                    print(f"    Skipping {filepath}: No valid snapshots found.")
                     continue
                 
-                print(f"  Found {len(snapshots)} snapshots.")
+                print(f"    Found {len(snapshots)} snapshots.")
                 
                 file_has_new_data = False
                 
@@ -57,7 +90,6 @@ def ingest_files():
                         (device_id, timestamp.isoformat())
                     )
                     if cursor.fetchone():
-                        # print(f"  Snapshot for {timestamp} already exists. Skipping.")
                         continue
                     
                     # Insert Snapshot
@@ -101,14 +133,19 @@ def ingest_files():
                 
         # Trigger reprocessing of intervals for this device if we ingested new data
         if device_updated:
-            print(f"Recalculating intervals for {device_name_clean}...")
+            print(f"Recalculating intervals for {device_name}...")
             process_device_snapshots(device_id)
 
-        # Check if folder is empty (ignoring .DS_Store) and remove it if so
-        remaining_files = [f for f in os.listdir(device_path) if f != '.DS_Store']
-        if not remaining_files:
-            print(f"Removing processed folder: {device_path}")
-            shutil.rmtree(device_path)
+    # Cleanup empty folders
+    for folder_path in folders_to_cleanup:
+        try:
+            if os.path.exists(folder_path):
+                remaining_files = [f for f in os.listdir(folder_path) if f != '.DS_Store']
+                if not remaining_files:
+                    print(f"Removing empty folder: {folder_path}")
+                    shutil.rmtree(folder_path)
+        except Exception as e:
+            print(f"Error cleaning up folder {folder_path}: {e}")
 
     conn.close()
     print("Ingestion complete.")

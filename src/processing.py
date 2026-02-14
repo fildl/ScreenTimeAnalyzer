@@ -65,6 +65,10 @@ def process_device_snapshots(device_id):
     # So we should treat "start of day" as implicit previous snapshot with 0 usage.
 
     for i, (curr_id, curr_ts_str) in enumerate(snapshots):
+        # Skip the very first snapshot (no prior baseline) to avoid assuming usage started at 00:00
+        if i == 0:
+            continue
+
         # Convert timestamp string back to datetime object
         curr_ts = datetime.fromisoformat(curr_ts_str)
         curr_apps = snapshot_data.get(curr_id, {})

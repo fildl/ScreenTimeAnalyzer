@@ -104,6 +104,13 @@ st.markdown("---")
 
 # --- Visualizations ---
 
+st.subheader("Hourly Activity Patterns")
+fig_hourly = viz.plot_hourly_activity(year=selected_year, device=selected_device)
+if fig_hourly:
+    st.plotly_chart(fig_hourly, use_container_width=True)
+else:
+    st.info("No data available for this selection.")
+
 st.subheader("Weekly Screen Time Activity")
 fig_weekly = viz.plot_weekly_activity(year=selected_year, device=selected_device)
 if fig_weekly:

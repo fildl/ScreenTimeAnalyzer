@@ -14,6 +14,8 @@ class Visualizer:
         'grid': '#333333',
     }
     
+    DEVICE_COLORS = ['#26547c', '#ef476f', '#ffd166']
+    
     PLOT_WIDTH = 1200
     PLOT_HEIGHT = 600
 
@@ -22,8 +24,8 @@ class Visualizer:
 
     def plot_weekly_activity(self, year: int = None, device: str = None):
         """
-        Stacked Bar chart of total usage hours per week, split by App.
-        Stats are aggregated by Week and App.
+        Stacked Bar chart of average daily usage hours per week, split by Device.
+        Stats are aggregated by Week and Device.
         """
         df = self.data.copy()
         
@@ -38,27 +40,32 @@ class Visualizer:
         if df.empty:
             return None
 
-        # Aggregate duration per week and device
+        # Aggregate duration per week and device, counting unique days
         aggregated = df.groupby(['week', 'device_name']).agg({
-            'duration_seconds': 'sum'
+            'duration_seconds': 'sum',
+            'date': 'nunique'
         }).reset_index()
         
-        aggregated['hours'] = aggregated['duration_seconds'] / 3600
+        # Calculate Average Daily Hours for that week
+        # Avoid division by zero by ensuring at least 1 day count (though nunique shouldn't be 0 if data exists)
+        aggregated['days_count'] = aggregated['date'].clip(lower=1)
+        aggregated['avg_daily_hours'] = (aggregated['duration_seconds'] / 3600) / aggregated['days_count']
         
         # Format for tooltip
         aggregated['formatted_time'] = aggregated.apply(
-            lambda x: f"{int(x['duration_seconds'] // 3600)}h {int((x['duration_seconds'] % 3600) // 60)}m", 
+            lambda x: f"{x['avg_daily_hours']:.1f}h/day ({int(x['duration_seconds'] // 3600)}h total)", 
             axis=1
         )
         
         fig = px.bar(
             aggregated, 
             x='week', 
-            y='hours',
+            y='avg_daily_hours',
             color='device_name',
             title=None,
-            labels={'hours': 'Hours', 'week': 'Week', 'device_name': 'Device'},
-            custom_data=['formatted_time', 'device_name']
+            labels={'avg_daily_hours': 'Avg Daily Hours', 'week': 'Week', 'device_name': 'Device'},
+            custom_data=['formatted_time', 'device_name'],
+            color_discrete_sequence=self.DEVICE_COLORS
         )
         
         # Styling
@@ -86,13 +93,13 @@ class Visualizer:
             yaxis=dict(
                 showgrid=True,
                 gridcolor=self.THEME_COLORS['grid'],
-                title='Usage Time (hours)'
+                title='Average Daily Hours'
             )
         )
         
         fig.update_traces(
             marker_line_width=0,
-            hovertemplate="<br><b>%{customdata[1]}</b><br><b>Time</b>: %{customdata[0]}<extra></extra>",
+            hovertemplate="<br><b>%{customdata[1]}</b><br><b>Usage</b>: %{customdata[0]}<extra></extra>",
             hoverlabel=dict(bgcolor="black")
         )
         
@@ -210,3 +217,78 @@ class Visualizer:
         )
         
         return fig
+
+    def plot_hourly_activity(self, year: int = None, device: str = None):
+        """
+        Bar chart showing average daily minutes per hour of the day (0-23).
+        """
+        df = self.data.copy()
+        
+        if year:
+            df = df[df['year'] == year]
+            
+        if device and device != "All":
+            df = df[df['device_name'] == device]
+
+        if df.empty:
+            return None
+        
+        # Calculate total days in the period to compute average
+        # We use the actual data range or the full year? 
+        # Using actual data range (min to max date) is safer.
+        min_date = df['date'].min()
+        max_date = df['date'].max()
+        days_count = (max_date - min_date).days + 1
+        days_count = max(days_count, 1) # Avoid division by zero
+
+        # Aggregate duration per hour and device
+        hourly = df.groupby(['hour', 'device_name'])['duration_seconds'].sum().reset_index()
+        
+        # Convert to Average Minutes per Day
+        hourly['avg_minutes'] = (hourly['duration_seconds'] / 60) / days_count
+        
+        # Create Bar Plot
+        fig = px.bar(
+            hourly, 
+            x='hour', 
+            y='avg_minutes',
+            color='device_name',
+            title=None,
+            labels={'avg_minutes': 'Avg Daily Minutes', 'hour': 'Hour of Day', 'device_name': 'Device'},
+            custom_data=['device_name'],
+            color_discrete_sequence=self.DEVICE_COLORS
+        )
+        
+        fig.update_layout(
+            paper_bgcolor=self.THEME_COLORS['paper'],
+            plot_bgcolor=self.THEME_COLORS['background'],
+            font_color=self.THEME_COLORS['text'],
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            hovermode="x",
+            width=self.PLOT_WIDTH,
+            height=500,
+            margin=dict(t=50, l=50, r=50, b=50),
+            xaxis=dict(
+                tickmode='linear',
+                tick0=0,
+                dtick=1,
+                range=[-0.5, 23.5],
+                title="Hour",
+                showgrid=False
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor=self.THEME_COLORS['grid'],
+                title='Average Minutes / Day'
+            )
+        )
+        
+        fig.update_traces(
+            marker_line_width=0,
+            hovertemplate="<br><b>%{customdata[0]}</b><br><b>Avg</b>: %{y:.1f} min/day<extra></extra>",
+            hoverlabel=dict(bgcolor="black")
+        )
+        
+        return fig
+
