@@ -22,10 +22,10 @@ class Visualizer:
     def __init__(self, data: pd.DataFrame):
         self.data = data
 
-    def plot_weekly_activity(self, year: int = None, device: str = None):
+    def plot_weekly_activity(self, year: int = None, device: str = None, breakdown: str = "Device"):
         """
-        Stacked Bar chart of average daily usage hours per week, split by Device.
-        Stats are aggregated by Week and Device.
+        Stacked Bar chart of average daily usage hours per week, split by Device or Category.
+        Stats are aggregated by Week and Breakdown column.
         """
         df = self.data.copy()
         
@@ -40,8 +40,12 @@ class Visualizer:
         if df.empty:
             return None
 
-        # Aggregate duration per week and device, counting unique days
-        aggregated = df.groupby(['week', 'device_name']).agg({
+        # Determine grouping column
+        group_col = 'device_name' if breakdown == "Device" else 'category'
+        color_seq = self.DEVICE_COLORS if breakdown == "Device" else px.colors.qualitative.Vivid
+
+        # Aggregate duration per week and breakdown column, counting unique days
+        aggregated = df.groupby(['week', group_col]).agg({
             'duration_seconds': 'sum',
             'date': 'nunique'
         }).reset_index()
@@ -61,11 +65,11 @@ class Visualizer:
             aggregated, 
             x='week', 
             y='avg_daily_hours',
-            color='device_name',
+            color=group_col,
             title=None,
-            labels={'avg_daily_hours': 'Avg Daily Hours', 'week': 'Week', 'device_name': 'Device'},
-            custom_data=['formatted_time', 'device_name'],
-            color_discrete_sequence=self.DEVICE_COLORS
+            labels={'avg_daily_hours': 'Avg Daily Hours', 'week': 'Week', group_col: breakdown},
+            custom_data=['formatted_time', group_col],
+            color_discrete_sequence=color_seq
         )
         
         # Styling
@@ -218,9 +222,10 @@ class Visualizer:
         
         return fig
 
-    def plot_hourly_activity(self, year: int = None, device: str = None):
+    def plot_hourly_activity(self, year: int = None, device: str = None, breakdown: str = "Device"):
         """
         Bar chart showing average daily minutes per hour of the day (0-23).
+        breakdown: "Device" or "Category"
         """
         df = self.data.copy()
         
@@ -233,16 +238,18 @@ class Visualizer:
         if df.empty:
             return None
         
+        # Determine grouping column
+        group_col = 'device_name' if breakdown == "Device" else 'category'
+        color_seq = self.DEVICE_COLORS if breakdown == "Device" else px.colors.qualitative.Vivid
+        
         # Calculate total days in the period to compute average
-        # We use the actual data range or the full year? 
-        # Using actual data range (min to max date) is safer.
         min_date = df['date'].min()
         max_date = df['date'].max()
         days_count = (max_date - min_date).days + 1
-        days_count = max(days_count, 1) # Avoid division by zero
+        days_count = max(days_count, 1)
 
-        # Aggregate duration per hour and device
-        hourly = df.groupby(['hour', 'device_name'])['duration_seconds'].sum().reset_index()
+        # Aggregate duration per hour and breakdown column
+        hourly = df.groupby(['hour', group_col])['duration_seconds'].sum().reset_index()
         
         # Convert to Average Minutes per Day
         hourly['avg_minutes'] = (hourly['duration_seconds'] / 60) / days_count
@@ -252,11 +259,11 @@ class Visualizer:
             hourly, 
             x='hour', 
             y='avg_minutes',
-            color='device_name',
+            color=group_col,
             title=None,
-            labels={'avg_minutes': 'Avg Daily Minutes', 'hour': 'Hour of Day', 'device_name': 'Device'},
-            custom_data=['device_name'],
-            color_discrete_sequence=self.DEVICE_COLORS
+            labels={'avg_minutes': 'Avg Daily Minutes', 'hour': 'Hour of Day', group_col: breakdown},
+            custom_data=[group_col],
+            color_discrete_sequence=color_seq
         )
         
         fig.update_layout(
@@ -288,6 +295,80 @@ class Visualizer:
             marker_line_width=0,
             hovertemplate="<br><b>%{customdata[0]}</b><br><b>Avg</b>: %{y:.1f} min/day<extra></extra>",
             hoverlabel=dict(bgcolor="black")
+        )
+        
+        return fig
+
+    def plot_usage_trend(self, year: int = None, device: str = None, window: int = 30):
+        """
+        Line chart showing daily usage trend with a rolling average.
+        """
+        df = self.data.copy()
+        
+        if year:
+            df = df[df['year'] == year]
+            
+        if device and device != "All":
+            df = df[df['device_name'] == device]
+
+        if df.empty:
+            return None
+        
+        # Aggregate daily usage
+        daily = df.groupby('date')['duration_seconds'].sum().reset_index()
+        daily['hours'] = daily['duration_seconds'] / 3600
+        daily['date'] = pd.to_datetime(daily['date'])
+        
+        # Sort by date to ensure rolling calculation is correct
+        daily = daily.sort_values('date')
+        
+        # Calculate Rolling Average
+        daily['rolling_avg'] = daily['hours'].rolling(window=window, min_periods=1).mean()
+        
+        import plotly.graph_objects as go
+        
+        fig = go.Figure()
+        
+        
+        
+        # Add Daily Usage (Bar for raw data points)
+        fig.add_trace(go.Bar(
+            x=daily['date'], 
+            y=daily['hours'],
+            name='Daily Usage',
+            marker=dict(color=self.THEME_COLORS['grid'], opacity=0.3),
+            hovertemplate='Daily: %{y:.1f}h<extra></extra>'
+        ))
+        
+        # Add Rolling Average (Line)
+        fig.add_trace(go.Scatter(
+            x=daily['date'], 
+            y=daily['rolling_avg'],
+            mode='lines',
+            name=f'{window}-Day Moving Avg',
+            line=dict(color='#26547c', width=3),
+            hovertemplate='Average: %{y:.1f}h<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            paper_bgcolor=self.THEME_COLORS['paper'],
+            plot_bgcolor=self.THEME_COLORS['background'],
+            font_color=self.THEME_COLORS['text'],
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            hovermode="x unified",
+            width=self.PLOT_WIDTH,
+            height=500,
+            margin=dict(t=50, l=50, r=50, b=50),
+            xaxis=dict(
+                showgrid=False,
+                title=None
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor=self.THEME_COLORS['grid'],
+                title='Hours / Day'
+            )
         )
         
         return fig

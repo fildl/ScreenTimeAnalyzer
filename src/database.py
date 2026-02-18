@@ -63,6 +63,23 @@ def init_db():
     );
     """)
 
+    # App Categories table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS app_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        app_name TEXT UNIQUE NOT NULL,
+        category TEXT NOT NULL,
+        alias TEXT
+    );
+    """)
+    
+    # Simple migration check: try to add column if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE app_categories ADD COLUMN alias TEXT")
+    except sqlite3.OperationalError:
+        # Column likely already exists
+        pass
+
     conn.commit()
     conn.close()
     print(f"Database initialized at {DB_PATH}")
@@ -80,6 +97,52 @@ def get_or_create_device(device_name):
         conn.commit()
     conn.close()
     return device_id
+
+# --- Category Management Helpers ---
+
+def get_all_categories():
+    """Returns a dict {app_name: {'category': category, 'alias': alias}}."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT app_name, category, alias FROM app_categories")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: {'category': row[1], 'alias': row[2]} for row in rows}
+
+def update_app_category(app_name, category, alias=None):
+    """Updates or inserts a category and alias for an app."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO app_categories (app_name, category, alias) 
+        VALUES (?, ?, ?)
+        ON CONFLICT(app_name) DO UPDATE SET 
+            category=excluded.category,
+            alias=excluded.alias
+    """, (app_name, category, alias))
+    conn.commit()
+    conn.close()
+
+def get_uncategorized_apps():
+    """
+    Returns a list of app names that exist in usage_intervals but not in app_categories.
+    Ordered by total duration (descending) to prioritize most used apps.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT u.app_name, SUM(u.duration_seconds) as total_duration
+        FROM usage_intervals u
+        LEFT JOIN app_categories c ON u.app_name = c.app_name
+        WHERE c.category IS NULL
+        GROUP BY u.app_name
+        ORDER BY total_duration DESC
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
 
 if __name__ == "__main__":
     init_db()
